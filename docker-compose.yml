@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # Веб‑приложение (API)
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api
+    ports:
+      - "8080:8080"
+    environment:
+      - RUN_ADDRESS=:8080
+      - MASTER_PASSWORD=${MASTER_PASSWORD}
+      - POSTGRES_URL=${POSTGRES_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+    depends_on:
+      - postgres
+      - minio
+      - rabbitmq
+    restart: unless-stopped
+    networks:
+      - gophprofile-net
+
+  # Воркер обработки аватарок
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - MASTER_PASSWORD=${MASTER_PASSWORD}
+      - POSTGRES_URL=${POSTGRES_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_BUCKET=${MINIO_BUCKET}
+      - RABBITMQ_URL=${RABBITMQ_URL}
+    depends_on:
+      - postgres
+      - minio
+      - rabbitmq
+    restart: unless-stopped
+    networks:
+      - gophprofile-net
+
+  # PostgreSQL база данных
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: gophprofile
+      POSTGRES_USER: gophuser
+      POSTGRES_PASSWORD: gophpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - gophprofile-net
+
+  # MinIO (S3‑совместимое хранилище)
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - gophprofile-net
+
+  # RabbitMQ брокер сообщений
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"  # AMQP
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+    networks:
+      - gophprofile-net
+
+volumes:
+  postgres_data:
+  minio_data:
+  rabbitmq_data:
+
+networks:
+  gophprofile-net:
+    driver: bridge

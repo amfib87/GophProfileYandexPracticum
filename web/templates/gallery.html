@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head><title>Галерея аватарок пользователя {{.UserID}}</title></head>
+<body>
+    <h1>Аватарки пользователя {{.UserID}}</h1>
+    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+        {{range .Avatars}}
+        <div style="text-align: center;">
+            <img src="/api/v1/avatars/{{.ID}}" alt="Avatar" width="100" height="100">
+            <p>{{.FileName}}</p>
+            <a href="/api/v1/avatars/{{.ID}}/metadata">Метаданные</a>
+        </div>
+        {{end}}
+    </div>
+</body>
+</html>
