@@ -1,9 +1,11 @@
-package worker
+package main
 
 import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"go-avatar-service/internal/config"
 	"go-avatar-service/internal/logger"
@@ -57,9 +59,13 @@ func run() error {
 	// Создание воркера
 	worker := NewWorker(rabbitMQ, s3Service, &db, resizer)
 
+	// Создаём контекст, который отменится при SIGINT/SIGTERM
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// Запуск воркера
 	log.Println("Starting avatar processing worker...")
-	err = worker.Start(context.Background())
+	err = worker.Start(ctx)
 	if err != nil {
 		log.Printf("Worker stopped with error: %v", err)
 		os.Exit(1)

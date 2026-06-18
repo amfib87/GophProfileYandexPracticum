@@ -1,6 +1,6 @@
 module go-avatar-service
 
-go 1.25.7
+go 1.26
 
 require (
 	github.com/disintegration/imaging v1.6.2
@@ -10,6 +10,7 @@ require (
 	github.com/pressly/goose/v3 v3.27.1
 	github.com/rabbitmq/amqp091-go v1.11.0
 	go.uber.org/zap v1.27.0
+	golang.org/x/sync v0.20.0
 )
 
 require (
@@ -40,7 +41,6 @@ require (
 	golang.org/x/crypto v0.51.0 // indirect
 	golang.org/x/image v0.0.0-20191009234506-e7c1f5e7dbb8 // indirect
 	golang.org/x/net v0.53.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/ini.v1 v1.67.2 // indirect

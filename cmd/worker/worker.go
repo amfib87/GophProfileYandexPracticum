@@ -1,4 +1,4 @@
-package worker
+package main
 
 import (
 	"bytes"
@@ -7,16 +7,14 @@ import (
 	"fmt"
 	"go-avatar-service/internal/domain"
 	"go-avatar-service/internal/repository"
-	"image"
+	"io"
 	"log"
-	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"go-avatar-service/internal/services"
 
 	"github.com/disintegration/imaging"
+	"golang.org/x/sync/errgroup"
 )
 
 type Worker struct {
@@ -36,15 +34,14 @@ func NewWorker(queue *services.QueueService, s3Service *services.S3Service, repo
 }
 
 func (w *Worker) Start(ctx context.Context) error {
-	// Обработчик сигналов ОС для graceful shutdown
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	g, ctx := errgroup.WithContext(ctx)
 
-	go func() {
-		<-sigChan
+	g.Go(func() error {
+		<-ctx.Done()
 		log.Println("Worker received shutdown signal")
 		w.queue.Close()
-	}()
+		return ctx.Err()
+	})
 
 	// Запуск потребителя сообщений из очереди
 	err := w.queue.Consume(func(msg []byte) error {
@@ -120,7 +117,7 @@ func (p *Worker) HandleUploadEvent(ctx context.Context, event *domain.AvatarUplo
 	}
 	defer original.Close()
 
-	_, _, err = image.Decode(original)
+	data, err := io.ReadAll(original)
 	if err != nil {
 		return err
 	}
@@ -140,7 +137,7 @@ func (p *Worker) HandleUploadEvent(ctx context.Context, event *domain.AvatarUplo
 
 	for _, s := range sizes {
 		// JPEG версия
-		jpegData, err := w.Resize(original, s.width, s.height, imaging.JPEG)
+		jpegData, err := w.Resize(bytes.NewReader(data), s.width, s.height, imaging.JPEG)
 		if err != nil {
 			return err
 		}

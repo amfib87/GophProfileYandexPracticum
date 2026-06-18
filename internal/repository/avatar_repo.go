@@ -149,24 +149,3 @@ func (r *AvatarRepository) UpdateAvatar(ctx context.Context, avatar *domain.Avat
 
 	return nil
 }
-
-func (r *AvatarRepository) GetUserAvatars(ctx context.Context, userID string) ([]*Avatar, error) {
-	var avatars []*Avatar
-	query := `SELECT id, user_id, file_name, file_size, mime_type, s3_key, created_at FROM avatars WHERE user_id = $1 ORDER BY created_at DESC`
-	rows, err := r.DB.Query(ctx, query, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var avatar Avatar
-		err := rows.Scan(&avatar.ID, &avatar.UserID, &avatar.FileName, &avatar.FileSize, &avatar.MimeType, &avatar.S3Key, &avatar.CreatedAt)
-		if err != nil {
-			return nil, err
-		}
-		avatars = append(avatars, &avatar)
-	}
-
-	return avatars, nil
-}

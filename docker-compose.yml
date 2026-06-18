@@ -63,7 +63,7 @@ services:
 
   # MinIO (S3‑совместимое хранилище)
   minio:
-    image: minio/minio
+    image: minio/minio:latest-RELEASE.2024-03-15T19-35-22Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}

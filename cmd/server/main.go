@@ -31,7 +31,6 @@ func run() error {
 
 	cfg := config.NewConfig()
 	cfg.GetEnvData()
-	logger.Log.Debug("flags were parsed", zap.Any("cfg", cfg))
 
 	// Инициализируем БД
 	db, err := repository.Initialization(cfg.PostgresURL)

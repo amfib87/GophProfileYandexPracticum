@@ -25,7 +25,7 @@ func Initialization(h *handlers.Handler) *Router {
 
 	e.GET("/api/v1/avatars/:id/metadata", h.GetAvatarMetadata) // # Получение метаданных аватарки
 
-	e.GET("/api/v1/users/:user_id/avatar", h.ListUserAvatars) // # Список аватарок пользователя
+	e.GET("/api/v1/users/:user_id/avatars", h.ListUserAvatars) // # Список аватарок пользователя
 
 	e.GET("/health", h.HealthCheck) // # Проверка работоспособности
 

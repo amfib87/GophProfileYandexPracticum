@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
-	"database/sql"
+	"embed"
+	"errors"
 	"fmt"
 	"go-avatar-service/internal/config"
 	"go-avatar-service/internal/domain"
@@ -16,6 +18,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
 )
@@ -44,7 +47,7 @@ func NewHandler(stor repository.AvatarRepository, cfg *config.Config, serv *serv
 		serv:      serv,
 		queu:      queu,
 		logger:    log,
-		templates: template.Must(template.ParseGlob("templates/*.html")),
+		templates: template.Must(loadTemplates()), //template.Must(template.ParseGlob("web/templates/*.html")),
 	}
 }
 
@@ -52,7 +55,7 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 	// Проверка заголовка X-User-ID
 	userID := c.Request().Header.Get("X-User-ID")
 	if userID == "" {
-		h.logger.Log.Error("X-User-ID header is required")
+		h.logger.Log.Debug("X-User-ID header is required")
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "X-User-ID header is required",
 		})
@@ -63,7 +66,7 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 	// Получение файла
 	file, err := c.FormFile("file")
 	if err != nil {
-		h.logger.Log.Error("c.FormFile: %v", zap.Error(err))
+		h.logger.Log.Error("c.FormFile: failed", zap.Error(err))
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "No file provided",
 		})
@@ -81,7 +84,7 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 	// Открытие файла для чтения
 	src, err := file.Open()
 	if err != nil {
-		h.logger.Log.Error("failed file.Open %v", zap.Error(err))
+		h.logger.Log.Error("failed file.Open:", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to open file",
 		})
@@ -92,7 +95,7 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 	buffer := make([]byte, 512)
 	_, err = io.ReadFull(src, buffer)
 	if err != nil && err != io.ErrUnexpectedEOF {
-		h.logger.Log.Error("failed io.ReadFull %v", zap.Error(err))
+		h.logger.Log.Error("failed io.ReadFull:", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to read file header",
 		})
@@ -128,9 +131,9 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 	//  сохранение: сначала S3, затем БД
 	s3Key := fmt.Sprintf("avatars/%s/%s", userID, file.Filename)
 
-	err = h.serv.Upload(s3Key, src)
+	err = h.serv.Upload(s3Key, io.MultiReader(bytes.NewReader(buffer), src))
 	if err != nil {
-		h.logger.Log.Error("failed h.serv.Upload %v", zap.Error(err))
+		h.logger.Log.Error("failed h.serv.Upload:", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to upload to S3",
 		})
@@ -141,7 +144,7 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 	avatarID, err := h.Storage.CreateAvatar(ctx, avatar)
 	if err != nil {
 		// При ошибке в БД пытаемся удалить файл из S3
-		h.logger.Log.Error("h.Storage.CreateAvatar %v", zap.Error(err))
+		h.logger.Log.Error("h.Storage.CreateAvatar:", zap.Error(err))
 		_ = h.serv.Delete(s3Key)
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to save metadata",
@@ -160,7 +163,7 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 	err = h.queu.Publish(event)
 	if err != nil {
 		// Логируем ошибку
-		h.logger.Log.Error("Failed to publish event for avatar %s: %v", zap.String("avatarID", avatarID), zap.Error(err))
+		h.logger.Log.Error("Failed to publish event for avatar", zap.String("avatarID", avatarID), zap.Error(err))
 	}
 
 	// Возврат ответа
@@ -174,7 +177,7 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 }
 
 func (h *Handler) GetAvatar(c echo.Context) error {
-	avatarID := c.Param("id")
+	avatarID := c.Param("user_id")
 
 	// Получаем query‑параметры
 	size := c.QueryParam("size")
@@ -205,11 +208,11 @@ func (h *Handler) GetAvatar(c echo.Context) error {
 	// Получаем метаданные из БД
 	avatar, err := h.Storage.GetAvatar(ctx, avatarID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			h.logger.Log.Error("error: Avatar not found")
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "Avatar not found"})
 		}
-		h.logger.Log.Error("h.Storage.GetAvatar %v", zap.Error(err))
+		h.logger.Log.Error("h.Storage.GetAvatar:", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve avatar metadata"})
 	}
 
@@ -244,7 +247,7 @@ func (h *Handler) GetAvatar(c echo.Context) error {
 	// Загружаем файл из S3
 	reader, err := h.serv.Download(s3Key)
 	if err != nil {
-		h.logger.Log.Error("failed h.serv.Download %v", zap.Error(err))
+		h.logger.Log.Error("failed h.serv.Download:", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to download file from storage"})
 	}
 	defer reader.Close()
@@ -280,11 +283,11 @@ func generateETag(avatarID, size, format string) string {
 }
 
 func (h *Handler) DeleteAvatar(c echo.Context) error {
-	avatarID := c.Param("id")
+	avatarID := c.Param("avatar_id")
 	userID := c.Request().Header.Get("X-User-ID")
 
 	if userID == "" {
-		h.logger.Log.Error("X-User-ID header is required")
+		h.logger.Log.Debug("X-User-ID header is required")
 		return c.JSON(http.StatusBadRequest, map[string]string{
 			"error": "X-User-ID header is required",
 		})
@@ -295,11 +298,11 @@ func (h *Handler) DeleteAvatar(c echo.Context) error {
 	// Получаем метаданные аватара из БД
 	avatar, err := h.Storage.GetAvatar(ctx, avatarID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			h.logger.Log.Error("Avatar not found")
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "Avatar not found"})
 		}
-		h.logger.Log.Error("failed h.Storage.GetAvatar %v", zap.Error(err))
+		h.logger.Log.Error("failed h.Storage.GetAvatar: ", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve avatar metadata"})
 	}
 
@@ -316,7 +319,7 @@ func (h *Handler) DeleteAvatar(c echo.Context) error {
 	deletedAt := time.Now()
 	err = h.Storage.SoftDeleteAvatar(ctx, avatarID, &deletedAt)
 	if err != nil {
-		h.logger.Log.Error("failed h.Storage.SoftDeleteAvatar %v", zap.Error(err))
+		h.logger.Log.Error("failed h.Storage.SoftDeleteAvatar:", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to mark avatar as deleted"})
 	}
 
@@ -334,7 +337,7 @@ func (h *Handler) DeleteAvatar(c echo.Context) error {
 	// Отправляем событие в брокер
 	err = h.queu.PublishDeleteEvent(deleteEvent)
 	if err != nil {
-		h.logger.Log.Error("Warning: failed to publish delete event for avatar %s: %v", zap.String("avatarID", avatarID), zap.Error(err))
+		h.logger.Log.Error("Warning: failed to publish delete event for avatar", zap.String("avatarID", avatarID), zap.Error(err))
 	}
 
 	return c.NoContent(http.StatusNoContent)
@@ -347,7 +350,7 @@ func (h *Handler) GetAvatarMetadata(c echo.Context) error {
 	// Получаем метаданные аватара из БД
 	avatar, err := h.Storage.GetAvatar(ctx, avatarID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			h.logger.Log.Error("Avatar %s not found", zap.String("avatar", avatarID))
 			return c.JSON(http.StatusNotFound, map[string]string{
 				"error": "Avatar not found",
@@ -418,7 +421,7 @@ func (h *Handler) ListUserAvatars(c echo.Context) error {
 	// Получаем список аватаров пользователя из БД
 	avatars, totalCount, err := h.Storage.ListUserAvatars(ctx, userID)
 	if err != nil {
-		h.logger.Log.Error("h.Storage.ListUserAvatars %v", zap.Error(err))
+		h.logger.Log.Error("h.Storage.ListUserAvatars", zap.Error(err))
 		return c.JSON(http.StatusInternalServerError, map[string]string{
 			"error": "Failed to retrieve avatars list",
 		})
@@ -499,7 +502,14 @@ func (h *Handler) HealthCheck(c echo.Context) error {
 
 // GET /web/upload — отображение формы загрузки
 func (h *Handler) UploadForm(c echo.Context) error {
-	return c.Render(http.StatusOK, "upload.html", nil)
+	// Используем встроенный шаблон напрямую
+	err := h.templates.ExecuteTemplate(c.Response(), "upload.html", nil)
+	if err != nil {
+		return err
+	}
+	c.Response().WriteHeader(http.StatusOK)
+
+	return nil
 }
 
 // POST /web/upload — обработка загрузки файла
@@ -531,4 +541,15 @@ func (h *Handler) Gallery(c echo.Context) error {
 		"UserID":  userID,
 		"Avatars": avatars,
 	})
+}
+
+// go:embed web/templates/*.html
+var templateFS embed.FS
+
+func loadTemplates() (*template.Template, error) {
+	tmpl, err := template.ParseFS(templateFS, "web/templates/*.html")
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse templates: %w", err)
+	}
+	return tmpl, nil
 }

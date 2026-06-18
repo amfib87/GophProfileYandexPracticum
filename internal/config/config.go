@@ -29,6 +29,8 @@ func (cfg *Config) GetEnvData() {
 	flag.StringVar(&cfg.MinIOBucket, "f", "", "'")
 	flag.StringVar(&cfg.RabbitMQURL, "g", "", "")
 
+	flag.Parse()
+
 	if servRunAddrEnv, ok := os.LookupEnv("RUN_ADDRESS"); ok {
 		cfg.ServRunAddr = servRunAddrEnv
 	}
