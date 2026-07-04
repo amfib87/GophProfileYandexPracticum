@@ -1,0 +1,58 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 1024
+  resource/add-job:
+    attributes:
+      - key: job
+        from_attribute: service.name
+        action: upsert
+
+exporters:
+  otlp/traces:
+    endpoint: 'jaeger:4317'
+    tls:
+      insecure: true
+  opensearch/logs:
+    http:
+      endpoint: http://opensearch:9200
+    # Logs configuration
+    logs_index: "otel-logs-GophProfile"
+    logs_index_fallback: "default"
+    logs_index_time_format: "yyyy.MM.dd"
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 10m
+    sending_queue:
+      enabled: true
+      num_consumers: 1
+      queue_size: 10
+
+service:
+  extensions:
+    - health_check
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors:
+        - resource/add-job
+        - batch
+      exporters: [opensearch/logs]   
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/traces] 
