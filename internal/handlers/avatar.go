@@ -61,9 +61,6 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 	start := time.Now()
 	h.logger.Log.Info("UploadAvatar")
 
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("UploadAvatar")
-
 	// Проверка заголовка X-User-ID
 	userID := c.Request().Header.Get("X-User-ID")
 	if userID == "" {
@@ -197,9 +194,6 @@ func (h *Handler) GetAvatar(c echo.Context) error {
 	ctx := c.Request().Context()
 	start := time.Now()
 
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("GetAvatar")
-
 	avatarID := c.Param("user_id")
 
 	status := "error"
@@ -320,9 +314,6 @@ func generateETag(avatarID, size, format string) string {
 func (h *Handler) DeleteAvatar(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("DeleteAvatar")
-
 	avatarID := c.Param("avatar_id")
 	userID := c.Request().Header.Get("X-User-ID")
 
@@ -383,9 +374,6 @@ func (h *Handler) DeleteAvatar(c echo.Context) error {
 
 func (h *Handler) GetAvatarMetadata(c echo.Context) error {
 	ctx := c.Request().Context()
-
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("GetAvatarMetadata")
 
 	avatarID := c.Param("id")
 
@@ -459,9 +447,6 @@ func extractImageDimensions(serv *services.S3Service, s3Key string) (map[string]
 func (h *Handler) ListUserAvatars(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("ListUserAvatars")
-
 	userID := c.Param("user_id")
 
 	// Получаем список аватаров пользователя из БД
@@ -514,9 +499,6 @@ func (h *Handler) ListUserAvatars(c echo.Context) error {
 func (h *Handler) HealthCheck(c echo.Context) error {
 	ctx := c.Request().Context()
 
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("HealthCheck")
-
 	health := map[string]interface{}{
 		"status": "healthy",
 		"checks": map[string]string{},
@@ -551,11 +533,6 @@ func (h *Handler) HealthCheck(c echo.Context) error {
 
 // GET /web/upload — отображение формы загрузки
 func (h *Handler) UploadForm(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("UploadForm")
-
 	// Используем встроенный шаблон напрямую
 	err := h.templates.ExecuteTemplate(c.Response(), "upload.html", nil)
 	if err != nil {
@@ -568,10 +545,6 @@ func (h *Handler) UploadForm(c echo.Context) error {
 
 // POST /web/upload — обработка загрузки файла
 func (h *Handler) HandleWebUpload(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("HandleWebUpload")
 
 	// Извлекаем user_id из формы
 	userID := c.FormValue("user_id")
@@ -588,11 +561,6 @@ func (h *Handler) HandleWebUpload(c echo.Context) error {
 
 // GET /web/gallery/{user_id} — отображение галереи аватарок
 func (h *Handler) Gallery(c echo.Context) error {
-	ctx := c.Request().Context()
-
-	span := trace.SpanFromContext(ctx)
-	span.AddEvent("Gallery")
-
 	userID := c.Param("user_id")
 
 	// Получаем список аватарок через API (можно напрямую из репозитория)
