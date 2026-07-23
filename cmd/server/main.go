@@ -12,6 +12,10 @@ import (
 	"go-avatar-service/internal/trace"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
@@ -79,9 +83,26 @@ func run() error {
 	router := router.Initialization(handler)
 
 	logger.Log.Info("running server", zap.String("cfg.RunAddress)", cfg.ServRunAddr))
-	if err := http.ListenAndServe(cfg.ServRunAddr, router); err != nil {
-		logger.Log.Error("failed http.ListenAndServe: %v", zap.Error(err))
-		return err
+	// if err := http.ListenAndServe(cfg.ServRunAddr, router); err != nil {
+	// 	logger.Log.Error("failed http.ListenAndServe: %v", zap.Error(err))
+	// 	return err
+	// }
+
+	srv := &http.Server{Addr: cfg.ServRunAddr, Handler: router}
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			logger.Log.Error("Server failed: %v", err)
+		}
+	}()
+
+	<-shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Log.Error("Shutdown error: %v", err)
 	}
 
 	return nil

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "avatar-service.fullname" . }}-config
+  labels:
+    app: {{ .Values.podLabels.app | default "avatar-service" }}
+    release: {{ .Release.Name }}
+data:
+  max_file_size: "{{ .Values.config.max_file_size }}"
+  allowed_mime_types: "{{ .Values.config.allowed_mime_types }}"
+  s3_bucket: "{{ .Values.config.s3_bucket }}"
+  log_level: "{{ .Values.config.log_level }}"
