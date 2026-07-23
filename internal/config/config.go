@@ -6,13 +6,14 @@ import (
 )
 
 type Config struct {
-	ServRunAddr    string
-	PostgresURL    string
-	MinIOEndpoint  string
-	MinIOAccessKey string
-	MinIOSecretKey string
-	MinIOBucket    string
-	RabbitMQURL    string
+	ServRunAddr              string
+	PostgresURL              string
+	MinIOEndpoint            string
+	MinIOAccessKey           string
+	MinIOSecretKey           string
+	MinIOBucket              string
+	RabbitMQURL              string
+	OtelExporterOTLPEndpoint string
 }
 
 func NewConfig() *Config {
@@ -28,6 +29,7 @@ func (cfg *Config) GetEnvData() {
 	flag.StringVar(&cfg.MinIOSecretKey, "e", "", "")
 	flag.StringVar(&cfg.MinIOBucket, "f", "", "'")
 	flag.StringVar(&cfg.RabbitMQURL, "g", "", "")
+	flag.StringVar(&cfg.OtelExporterOTLPEndpoint, "h", "otel-collector:4317", "")
 
 	flag.Parse()
 
@@ -57,6 +59,10 @@ func (cfg *Config) GetEnvData() {
 
 	if rabbitMQURLEnv, ok := os.LookupEnv("RABBITMQ_URL"); ok {
 		cfg.RabbitMQURL = rabbitMQURLEnv
+	}
+
+	if OtelExporterOTLPEndpointEnv, ok := os.LookupEnv("OTEL_EXPORTER_OTLP_ENDPOINT"); ok {
+		cfg.OtelExporterOTLPEndpoint = OtelExporterOTLPEndpointEnv
 	}
 
 }

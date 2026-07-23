@@ -23,12 +23,14 @@ func main() {
 }
 
 func run() error {
+	ctx := context.Background()
 
 	// Создаем логгер
-	logger, err := logger.Initialization()
+	logger, otelShutdownLog, err := logger.Initialization(ctx)
 	if err != nil {
 		return err
 	}
+	defer otelShutdownLog()
 	logger.Log.Debug("logger was successfulle created")
 
 	cfg := config.NewConfig()

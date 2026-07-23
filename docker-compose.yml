@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Веб‑приложение (API)
   server:
@@ -18,13 +16,98 @@ services:
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_BUCKET=${MINIO_BUCKET}
       - RABBITMQ_URL=${RABBITMQ_URL}
+
+      - OTEL_SERVICE_NAME=GophProfileYandexPracticum
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+      - OTEL_PROPAGATORS=tracecontext,baggage
+      - OTEL_TRACES_EXPORTER=otlp      
+      - OTEL_EXPORTER_OTLP_INSECURE=true      
     depends_on:
       - postgres
       - minio
       - rabbitmq
+      - otel-collector
     restart: unless-stopped
     networks:
       - gophprofile-net
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: otel-collector
+    restart: always
+    command: ['--config=/etc/otel-collector-config.yaml']
+    volumes:
+      - ./otel-collector-config.yml:/etc/otel-collector-config.yaml
+    ports:
+      - '4317:4317'
+      - '13133:13133' # health check 
+      - '8889:8889' # Prometheus exporter metrics
+      - '4318:4318' # OTLP http receiver      
+    networks:
+      - gophprofile-net    
+    depends_on:
+      - jaeger        
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"    
+    container_name: jaeger
+    restart: always
+    networks:
+      - gophprofile-net    
+    ports:
+      - '16686:16686' # UI Jaeger    
+
+  opensearch:
+    image: opensearchproject/opensearch:3.4.0
+    container_name: opensearch
+    ports:
+      - '9200:9200'
+    environment:
+      - discovery.type=single-node
+      - DISABLE_SECURITY_PLUGIN=true
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python3.9 -c "import urllib.request; urllib.request.urlopen(''http://localhost:9200/_cluster/health'', timeout=2)"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:3.4.0
+    container_name: opensearch-dashboards
+    ports:
+      - '5601:5601'
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    depends_on:
+      - opensearch
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:12.3.1
+    container_name: grafana
+    ports:
+      - '3000:3000'
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-opensearch-datasource
+    volumes:
+      - ./grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - opensearch
+    restart: unless-stopped
 
   # Воркер обработки аватарок
   worker:
@@ -39,10 +122,16 @@ services:
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
       - MINIO_BUCKET=${MINIO_BUCKET}
       - RABBITMQ_URL=${RABBITMQ_URL}
+
+      - OTEL_SERVICE_NAME=avatar-worker
+      - OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+      - OTEL_PROPAGATORS=tracecontext,baggage
+      - OTEL_TRACES_EXPORTER=otlp      
     depends_on:
       - postgres
       - minio
       - rabbitmq
+      - otel-collector      
     restart: unless-stopped
     networks:
       - gophprofile-net
@@ -63,7 +152,7 @@ services:
 
   # MinIO (S3‑совместимое хранилище)
   minio:
-    image: minio/minio:latest-RELEASE.2024-03-15T19-35-22Z
+    image: minio/minio:latest
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
@@ -97,6 +186,8 @@ volumes:
   postgres_data:
   minio_data:
   rabbitmq_data:
+  opensearch-data:
+  grafana-data: 
 
 networks:
   gophprofile-net:

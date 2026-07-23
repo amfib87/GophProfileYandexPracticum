@@ -10,6 +10,7 @@ import (
 	"go-avatar-service/internal/config"
 	"go-avatar-service/internal/domain"
 	"go-avatar-service/internal/logger"
+	"go-avatar-service/internal/metrics"
 	"go-avatar-service/internal/repository"
 	"go-avatar-service/internal/services"
 	"html/template"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
 
@@ -30,6 +32,7 @@ type Handler struct {
 	queu      *services.QueueService
 	logger    logger.Tlog
 	templates *template.Template
+	tracer    trace.Tracer
 }
 
 // Константы для валидации
@@ -40,18 +43,24 @@ const (
 	ValidWebP   = "image/webp"
 )
 
-func NewHandler(stor repository.AvatarRepository, cfg *config.Config, serv *services.S3Service, queu *services.QueueService, log logger.Tlog) *Handler {
+func NewHandler(stor repository.AvatarRepository, cfg *config.Config, serv *services.S3Service, queu *services.QueueService,
+	log logger.Tlog, tracer trace.Tracer) *Handler {
 	return &Handler{
 		Storage:   stor,
 		cfg:       cfg,
 		serv:      serv,
 		queu:      queu,
-		logger:    log,
-		templates: template.Must(loadTemplates()), //template.Must(template.ParseGlob("web/templates/*.html")),
+		logger:    logger.Tlog{Log: log.Log.With("component", "GophProfile")},
+		templates: template.Must(loadTemplates()),
+		tracer:    tracer,
 	}
 }
 
 func (h *Handler) UploadAvatar(c echo.Context) error {
+	ctx := c.Request().Context()
+	start := time.Now()
+	h.logger.Log.Info("UploadAvatar")
+
 	// Проверка заголовка X-User-ID
 	userID := c.Request().Header.Get("X-User-ID")
 	if userID == "" {
@@ -60,8 +69,6 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 			"error": "X-User-ID header is required",
 		})
 	}
-
-	ctx := c.Request().Context()
 
 	// Получение файла
 	file, err := c.FormFile("file")
@@ -153,6 +160,13 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 
 	avatar.ID = avatarID
 
+	status := "success"
+	duration := time.Since(start).Seconds()
+
+	metrics.UploadsTotal.WithLabelValues(status, userID).Inc()
+	metrics.UploadDuration.WithLabelValues(status).Observe(duration)
+	metrics.StorageUsage.WithLabelValues(userID).Set(float64(file.Size))
+
 	// Отправка события в брокер для обработки
 	event := &domain.AvatarUploadEvent{
 		AvatarID: avatarID,
@@ -177,7 +191,21 @@ func (h *Handler) UploadAvatar(c echo.Context) error {
 }
 
 func (h *Handler) GetAvatar(c echo.Context) error {
+	ctx := c.Request().Context()
+	start := time.Now()
+
 	avatarID := c.Param("user_id")
+
+	status := "error"
+	userID := "unknown" // Дефолтное значение, если аватар не найден сразу
+
+	defer func() {
+		duration := time.Since(start).Seconds()
+
+		// Обновляем метрики ПОСЛЕ того, как мы точно знаем статус операции
+		metrics.UploadsTotal.WithLabelValues(status, userID).Inc()
+		metrics.UploadDuration.WithLabelValues(status).Observe(duration)
+	}()
 
 	// Получаем query‑параметры
 	size := c.QueryParam("size")
@@ -202,8 +230,6 @@ func (h *Handler) GetAvatar(c echo.Context) error {
 			"details": "Valid formats: jpeg, png, webp",
 		})
 	}
-
-	ctx := c.Request().Context()
 
 	// Получаем метаданные из БД
 	avatar, err := h.Storage.GetAvatar(ctx, avatarID)
@@ -257,6 +283,9 @@ func (h *Handler) GetAvatar(c echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "max-age=86400")
 	c.Response().Header().Set("ETag", generateETag(avatarID, size, format))
 
+	// УСПЕХ! Только здесь меняем статус на success
+	status = "success"
+
 	// Отдаём бинарные данные изображения
 	return c.Stream(http.StatusOK, contentType, reader)
 }
@@ -283,6 +312,8 @@ func generateETag(avatarID, size, format string) string {
 }
 
 func (h *Handler) DeleteAvatar(c echo.Context) error {
+	ctx := c.Request().Context()
+
 	avatarID := c.Param("avatar_id")
 	userID := c.Request().Header.Get("X-User-ID")
 
@@ -292,8 +323,6 @@ func (h *Handler) DeleteAvatar(c echo.Context) error {
 			"error": "X-User-ID header is required",
 		})
 	}
-
-	ctx := c.Request().Context()
 
 	// Получаем метаданные аватара из БД
 	avatar, err := h.Storage.GetAvatar(ctx, avatarID)
@@ -344,8 +373,9 @@ func (h *Handler) DeleteAvatar(c echo.Context) error {
 }
 
 func (h *Handler) GetAvatarMetadata(c echo.Context) error {
-	avatarID := c.Param("id")
 	ctx := c.Request().Context()
+
+	avatarID := c.Param("id")
 
 	// Получаем метаданные аватара из БД
 	avatar, err := h.Storage.GetAvatar(ctx, avatarID)
@@ -415,8 +445,9 @@ func extractImageDimensions(serv *services.S3Service, s3Key string) (map[string]
 }
 
 func (h *Handler) ListUserAvatars(c echo.Context) error {
-	userID := c.Param("user_id")
 	ctx := c.Request().Context()
+
+	userID := c.Param("user_id")
 
 	// Получаем список аватаров пользователя из БД
 	avatars, totalCount, err := h.Storage.ListUserAvatars(ctx, userID)
@@ -466,12 +497,12 @@ func (h *Handler) ListUserAvatars(c echo.Context) error {
 }
 
 func (h *Handler) HealthCheck(c echo.Context) error {
+	ctx := c.Request().Context()
+
 	health := map[string]interface{}{
 		"status": "healthy",
 		"checks": map[string]string{},
 	}
-
-	ctx := c.Request().Context()
 
 	// Проверка БД
 	if err := h.Storage.DB.Ping(ctx); err != nil {
@@ -514,6 +545,7 @@ func (h *Handler) UploadForm(c echo.Context) error {
 
 // POST /web/upload — обработка загрузки файла
 func (h *Handler) HandleWebUpload(c echo.Context) error {
+
 	// Извлекаем user_id из формы
 	userID := c.FormValue("user_id")
 	if userID == "" {

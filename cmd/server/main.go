@@ -1,15 +1,19 @@
 package main
 
 import (
+	"context"
 	"go-avatar-service/internal/config"
 	"go-avatar-service/internal/handlers"
 	"go-avatar-service/internal/logger"
+	"go-avatar-service/internal/metrics"
 	"go-avatar-service/internal/repository"
 	"go-avatar-service/internal/router"
 	"go-avatar-service/internal/services"
+	"go-avatar-service/internal/trace"
 	"log"
 	"net/http"
 
+	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 )
 
@@ -21,16 +25,31 @@ func main() {
 }
 
 func run() error {
+	ctx := context.Background()
 
 	// Создаем логгер
-	logger, err := logger.Initialization()
+	logger, otelShutdownLog, err := logger.Initialization(ctx)
 	if err != nil {
 		return err
 	}
+	defer otelShutdownLog()
 	logger.Log.Debug("logger was successfulle created")
 
 	cfg := config.NewConfig()
 	cfg.GetEnvData()
+
+	otelShutdownMetr, err := metrics.InitMeterProvider(ctx)
+	if err != nil {
+		return err
+	}
+	defer otelShutdownMetr()
+
+	// Инициализация трейсинга
+	otelShutdown, err := trace.InitTracerProvider(ctx, cfg.OtelExporterOTLPEndpoint)
+	if err != nil {
+		return err
+	}
+	defer otelShutdown()
 
 	// Инициализируем БД
 	db, err := repository.Initialization(cfg.PostgresURL)
@@ -54,7 +73,7 @@ func run() error {
 	}
 
 	// Инициализируем хэндлер
-	handler := handlers.NewHandler(db, cfg, s3Service, rabbitMQ, logger)
+	handler := handlers.NewHandler(db, cfg, s3Service, rabbitMQ, logger, otel.Tracer("AppHandler"))
 
 	// Инициализируем роутер
 	router := router.Initialization(handler)
