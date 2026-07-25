@@ -1,0 +1,167 @@
+# avatar-service/values.yaml
+
+# --- Общие параметры ---
+replicaCount: 3
+
+image:
+  repository: avatar-service
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Namespace, в котором будет установлен релиз
+namespace: default
+
+# --- Конфигурация приложения (ConfigMap) ---
+config:
+  max_file_size: "10485760"
+  allowed_mime_types: "image/jpeg,image/png,image/webp"
+  s3_bucket: "avatars"
+  log_level: "info"
+
+# --- Ресурсы и масштабирование (HPA) ---
+resources:
+  requests:
+    memory: "128Mi"
+    cpu: "100m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  cpu:
+    targetUtilization: 70
+  memory:
+    targetUtilization: 80
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+
+# --- Service и сеть ---
+service:
+  type: ClusterIP
+  httpPort: 80
+  metricsPort: 9100
+  targetHttpPort: http
+  targetMetricsPort: metrics
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: avatars.example.com
+      path: /
+  tls:
+    enabled: true
+    secretName: avatars-example-com-tls
+    hosts:
+      - avatars.example.com
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/client-body-timeout: "60"
+    cert-manager.io/issuer: "letsencrypt-prod"
+
+# --- Пробы (Probes) ---
+probes:
+  liveness:
+    enabled: true
+    path: /health
+    port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    enabled: true
+    path: /ready
+    port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    failureThreshold: 3
+  startup:
+    enabled: true
+    path: /ready
+    port: http
+    failureThreshold: 30
+    periodSeconds: 10
+
+# --- Безопасность (SecurityContext, RBAC, NetworkPolicy) ---
+security:
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false 
+
+serviceAccount:
+  create: true
+  name: "" 
+
+networkPolicy:
+  enabled: true
+  ingress:
+    allowFromIngress: true
+    ingressLabel:
+      app: ingress-nginx-controller
+  egress:
+    allowToDatabase: true
+    databaseLabel:
+      app: postgres
+    allowOutboundHttps: true
+
+# --- Мониторинг (ServiceMonitor) ---
+monitor:
+  enabled: true
+  interval: 30s
+  path: /metrics
+  scheme: http
+  namespaceSelector:
+    matchNames:
+      - default
+
+# --- Миграции БД (Job hook) ---
+migrations:
+  enabled: true
+  image:
+    repository: avatar-service
+    tag: latest
+    pullPolicy: IfNotPresent
+  command: ["goose", "up"]
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+
+# --- Аннотации и метки ---
+podAnnotations: {}
+podLabels:
+  app: avatar-service
+
+# --- Переменные окружения (не секреты) ---
+env:
+  - name: APP_ENV
+    value: "production"
+  - name: PORT
+    value: "8080"
+  - name: METRICS_PORT
+    value: "9090"
+
+# --- Секреты (ссылки) ---
+# В шаблонах эти значения должны использоваться для создания envFrom из Secret
+secrets:
+  name: avatar-secrets
+  keys:
+    DATABASE_URL: database-url
+    S3_ACCESS_KEY: s3-access-key
+    S3_SECRET_KEY: s3-secret-key
+    RABBITMQ_URL: rabbitmq-url

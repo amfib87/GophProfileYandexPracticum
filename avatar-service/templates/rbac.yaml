@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: avatar-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: avatar-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: avatar-rolebinding
+subjects:
+- kind: ServiceAccount
+  name: avatar-sa
+  namespace: default
+roleRef:
+  kind: Role
+  name: avatar-role
+  apiGroup: rbac.authorization.k8s.io
